@@ -311,7 +311,7 @@ const massDownload = async (files: { filename: string; content: string }[]) => {
 };
 
 const sectionUniqueId = (lessonNumber: number, section: Section) =>
-	`${lessonNumber}-${section.supersection}-${section.subsection}.html`;
+	`${lessonNumber}-${section.supersection}-${section.subsection}`;
 
 const csvFilename = (lessonNumber: number) => `lesson-${lessonNumber}.csv`;
 
