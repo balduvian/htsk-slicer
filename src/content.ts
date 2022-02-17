@@ -1,15 +1,20 @@
+type FullElement = HTMLElement & {
+	textContent: string;
+	firstElementChild: FullElement | null;
+};
+
 type Section = {
 	supersection: number;
 	subsection: number;
-	titleElement: Element | undefined;
-	bodyElements: Element[];
+	titleElement: FullElement | undefined;
+	bodyElements: FullElement[];
 };
 
 type BuildingSection = {
 	supersection: number;
 	subsection: number;
-	titleElement: Element | undefined;
-	bodyElements: Element[];
+	titleElement: FullElement | undefined;
+	bodyElements: FullElement[];
 };
 
 const allElements = (section: Section) => {
@@ -30,7 +35,7 @@ const grabContent = () => {
 			?.firstElementChild ?? funErr('Improper main tree found');
 
 	return content instanceof HTMLElement
-		? content
+		? (content as FullElement)
 		: funErr('Content is not an element');
 };
 
@@ -50,7 +55,7 @@ const grabLessonNumber = () => {
 		: lessonNumber;
 };
 
-const cleanPage = (content: Element) => {
+const cleanPage = (content: FullElement) => {
 	[
 		...content.getElementsByTagName('script'),
 		...content.getElementsByTagName('ins'),
@@ -61,11 +66,9 @@ const cleanPage = (content: Element) => {
 const justLetters = (text: String) =>
 	text.toLowerCase().replace(/[^(a-z )]/g, '');
 
-const autoModifierTag = (content: HTMLElement) => {
-	const contentList = [...content.children];
-
-	const isIntroduction = (element: Element) => {
-		const text = justLetters(element.textContent!);
+const autoModifierTag = (content: FullElement) => {
+	const isIntroduction = (element: FullElement) => {
+		const text = justLetters(element.textContent);
 
 		return (
 			text.startsWith('introduction') ||
@@ -74,22 +77,22 @@ const autoModifierTag = (content: HTMLElement) => {
 		);
 	};
 
-	const isPracticeLink = (element: Element) => {
-		let foundImg = false;
+	const isPracticeLink = (element: FullElement) => {
+		if (element.textContent.trim() === '') return false;
 
 		for (const child of element.children) {
 			if (child.nodeName === 'A') {
 				for (const child2 of child.children) {
-					if (child2.nodeName === 'IMG') foundImg = true;
+					if (child2.nodeName === 'IMG') return true;
 				}
 			}
 		}
 
-		return foundImg && element.textContent!.trim() !== '';
+		return false;
 	};
 
-	const isCloser = (element: Element) => {
-		const text = justLetters(element.textContent!);
+	const isCloser = (element: FullElement) => {
+		const text = justLetters(element.textContent);
 
 		return (
 			text.startsWith('thats it for this lesson') ||
@@ -102,15 +105,15 @@ const autoModifierTag = (content: HTMLElement) => {
 		);
 	};
 
-	const isVocab = (element: Element) => {
+	const isVocab = (element: FullElement) => {
 		const header = element.firstElementChild;
 
 		if (
 			header !== null &&
 			(header.nodeName === 'U' ||
-				(header as HTMLElement).style.textDecoration === 'underline')
+				header.style.textDecoration === 'underline')
 		) {
-			const text = justLetters(header.textContent!);
+			const text = justLetters(header.textContent);
 
 			if (
 				text.startsWith('nouns') ||
@@ -125,31 +128,74 @@ const autoModifierTag = (content: HTMLElement) => {
 		return false;
 	};
 
-	for (const element of contentList) {
+	for (const element of content.children) {
 		if (
-			isIntroduction(element) ||
-			isPracticeLink(element) ||
-			isVocab(element)
+			isIntroduction(element as FullElement) ||
+			isPracticeLink(element as FullElement) ||
+			isVocab(element as FullElement)
 		) {
 			element.classList.add(POISON_CLASS_NAME);
-		} else if (isCloser(element)) {
+		} else if (isCloser(element as FullElement)) {
 			element.classList.add(DISREGARD_CLASS_NAME);
 		}
 	}
 };
 
-const parseSections = (content: HTMLElement) => {
-	const contentList = [...content.children];
-	const sections: Section[] = [];
+const parseSections = (content: FullElement) => {
+	const isTitle = (element: FullElement) => {
+		if (element.classList.contains(JOIN_CLASS_NAME)) return false;
 
-	let buildingSection: BuildingSection = {
-		supersection: 0,
-		subsection: 1,
-		titleElement: undefined,
-		bodyElements: [],
+		/* titles only contains spans, no immediate text */
+		if (
+			[...element.childNodes]
+				.filter(node => node.nodeType === 3)
+				.some(text => (text as CharacterData).data.trim() !== '')
+		) {
+			return false;
+		}
+
+		for (const child of element.children) {
+			if (
+				child.textContent!.trim() !== '' &&
+				(child.nodeName === 'U' ||
+					(child as FullElement).style.textDecoration === 'underline')
+			) {
+				return true;
+			}
+		}
+
+		return false;
 	};
 
-	const saveSection = (building: BuildingSection) => {
+	const isBreak = (element: FullElement) => {
+		if (element.classList.contains(JOIN_CLASS_NAME)) return false;
+
+		if (
+			element.nodeName === 'HR' ||
+			element.classList.contains(BREAK_CLASS_NAME)
+		)
+			return true;
+
+		/* images are part of the section */
+		if (element.getElementsByTagName('img').length > 0) return false;
+
+		/* centered breaks */
+		if (
+			element.style.textAlign !== 'left' &&
+			(element.style.textAlign === 'center' ||
+				(element as HTMLParagraphElement).align === 'center')
+		)
+			return true;
+
+		/* blank breaks */
+		return element.textContent!.trim() === '';
+	};
+
+	const isIgnore = (element: FullElement) => {
+		return element.nodeName === 'H3';
+	};
+
+	const saveSection = (sections: Section[], building: BuildingSection) => {
 		/* the only check for if the section is complete (it has body elements) */
 		if (building.bodyElements.length === 0) return;
 
@@ -172,106 +218,61 @@ const parseSections = (content: HTMLElement) => {
 		}
 	};
 
-	const isTitle = (element: Element) => {
-		if (element.classList.contains(JOIN_CLASS_NAME)) return false;
-
-		/* titles only contains spans, no immediate text */
-		if (
-			[...element.childNodes]
-				.filter(node => node.nodeType === 3)
-				.some(text => (text as CharacterData).data.trim() !== '')
-		) {
-			return false;
-		}
-
-		for (const child of element.children) {
-			if (
-				child.nodeType === Node.ELEMENT_NODE &&
-				child.textContent!.trim() !== '' &&
-				(child.nodeName === 'U' ||
-					(child as HTMLElement).style.textDecoration === 'underline')
-			) {
-				return true;
-			}
-		}
-
-		return false;
-	};
-
-	const isBreak = (element: Element) => {
-		const style = (element as HTMLElement).style;
-		if (style === undefined) return false;
-
-		if (element.classList.contains(JOIN_CLASS_NAME)) return false;
-
-		if (
-			element.nodeName === 'HR' ||
-			element.classList.contains(BREAK_CLASS_NAME)
-		)
-			return true;
-
-		/* images are part of the section */
-		if (element.getElementsByTagName('img').length > 0) {
-			return false;
-		}
-
-		/* centered breaks */
-		if (
-			style.textAlign !== 'left' &&
-			(style.textAlign === 'center' ||
-				(element as HTMLParagraphElement).align === 'center')
-		)
-			return true;
-
-		/* blank breaks */
-		return element.textContent!.trim() === '';
-	};
-
-	const isIgnore = (element: Element) => {
-		return element.nodeName === 'H3';
-	};
-
-	const newSection = (isTitle: boolean, include: Element | undefined) => {
+	const newSection = (
+		sections: Section[],
+		building: BuildingSection,
+		isTitle: boolean,
+		include: FullElement | undefined,
+	) => {
 		/* attempt to break up the section */
-		saveSection(buildingSection);
-
-		const old = buildingSection;
+		saveSection(sections, building);
 
 		/* new section carrying over data from the previous */
-		buildingSection = {
-			supersection: isTitle ? old.supersection + 1 : old.supersection,
-			subsection: isTitle ? 0 : old.subsection + 1,
-			titleElement: isTitle ? include : old.titleElement,
+		return {
+			supersection: isTitle
+				? building.supersection + 1
+				: building.supersection,
+			subsection: isTitle ? 0 : building.subsection + 1,
+			titleElement: isTitle ? include : building.titleElement,
 			bodyElements: include === undefined || isTitle ? [] : [include],
 		};
 	};
 
+	const sections: Section[] = [];
+
+	let buildingSection: BuildingSection = {
+		supersection: 0,
+		subsection: 1,
+		titleElement: undefined,
+		bodyElements: [],
+	};
+
 	let previousTitle = false;
 
-	for (let i = 0; i < contentList.length; ++i) {
-		const current = contentList[i];
+	for (const current of content.children) {
+		if (isIgnore(current as FullElement)) continue;
 
-		if (isIgnore(current)) continue;
-
-		const title = isTitle(current);
-		const breaking = isBreak(current);
+		const title = isTitle(current as FullElement);
+		const breaking = isBreak(current as FullElement);
 
 		if ((title || breaking) && !previousTitle) {
-			newSection(
+			buildingSection = newSection(
+				sections,
+				buildingSection,
 				title,
 				title || current.classList.contains(BREAK_CLASS_NAME)
-					? current
+					? (current as FullElement)
 					: undefined,
 			);
 		} else {
-			buildingSection.bodyElements.push(current);
+			buildingSection.bodyElements.push(current as FullElement);
 		}
 
 		previousTitle = title;
 	}
 
 	/* save the last section */
-	saveSection(buildingSection);
+	saveSection(sections, buildingSection);
 
 	return sections;
 };
@@ -391,7 +392,17 @@ const sectionClassName = (num: number) => `htskSection-${num}`;
 const isSectionClassName = (className: string) =>
 	className.startsWith('htskSection-');
 
-const findSections = (content: HTMLElement) => {
+const clearSectionClasses = (content: FullElement) => {
+	for (const element of content.children) {
+		for (const existing of [...element.classList.values()]) {
+			if (isSectionClassName(existing)) {
+				element.classList.remove(existing);
+			}
+		}
+	}
+};
+
+const findSections = (content: FullElement) => {
 	/* find the sections */
 	globalSections = parseSections(content);
 
@@ -407,16 +418,6 @@ const findSections = (content: HTMLElement) => {
 	});
 
 	console.log(globalSections);
-};
-
-const clearSectionClasses = (content: HTMLElement) => {
-	for (const element of content.children) {
-		for (const existing of [...element.classList.values()]) {
-			if (isSectionClassName(existing)) {
-				element.classList.remove(existing);
-			}
-		}
-	}
 };
 
 let globalSections: Section[];
