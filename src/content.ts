@@ -61,33 +61,16 @@ const cleanPage = (content: Element) => {
 const justLetters = (text: String) =>
 	text.toLowerCase().replace(/[^(a-z )]/g, '');
 
-const directTexts = (
-	element: Element,
-	clean: (text: String) => string,
-	filter: (element: Element) => boolean = () => true,
-) => {
-	const texts: string[] =
-		element.textContent === null ? [] : [clean(element.textContent)];
-
-	for (const child of element.children) {
-		if (filter(child)) {
-			const text = child.textContent;
-			if (text !== null) texts.push(clean(text));
-		}
-	}
-
-	return texts;
-};
-
 const autoModifierTag = (content: HTMLElement) => {
 	const contentList = [...content.children];
 
 	const isIntroduction = (element: Element) => {
-		return directTexts(element, justLetters).some(
-			text =>
-				text.startsWith('introduction') ||
-				text.startsWith('this lesson is also available') ||
-				text.includes('memrise tool'),
+		const text = justLetters(element.textContent!);
+
+		return (
+			text.startsWith('introduction') ||
+			text.startsWith('this lesson is also available') ||
+			text.includes('memrise tool')
 		);
 	};
 
@@ -102,39 +85,44 @@ const autoModifierTag = (content: HTMLElement) => {
 			}
 		}
 
-		return foundImg && element.textContent?.trim() !== '';
+		return foundImg && element.textContent!.trim() !== '';
 	};
 
 	const isCloser = (element: Element) => {
-		return directTexts(element, justLetters).some(
-			text =>
-				text.startsWith('thats it for this lesson') ||
-				text.startsWith('thats it for lesson') ||
-				text.startsWith('okay i got it') ||
-				text.startsWith('click here for a workbook') ||
-				(text.startsWith('there are') &&
-					text.includes('example sentences in unit')) ||
-				text.startsWith('all entries are linked to an audio file'),
+		const text = justLetters(element.textContent!);
+
+		return (
+			text.startsWith('thats it for this lesson') ||
+			text.startsWith('thats it for lesson') ||
+			text.startsWith('okay i got it') ||
+			text.startsWith('click here for a workbook') ||
+			(text.startsWith('there are') &&
+				text.includes('example sentences in unit')) ||
+			text.startsWith('all entries are linked to an audio file')
 		);
 	};
 
 	const isVocab = (element: Element) => {
-		return (
-			directTexts(element, justLetters).some(text =>
-				text.startsWith('vocabulary'),
-			) ||
-			directTexts(
-				element,
-				justLetters,
-				child =>
-					(child as HTMLElement).style.textDecoration === 'underline',
-			).some(
-				text =>
-					text.startsWith('nouns') ||
-					text.startsWith('verb') ||
-					text.startsWith('adjectives'),
+		const header = element.firstElementChild;
+
+		if (
+			header !== null &&
+			(header.nodeName === 'U' ||
+				(header as HTMLElement).style.textDecoration === 'underline')
+		) {
+			const text = justLetters(header.textContent!);
+
+			if (
+				text.startsWith('nouns') ||
+				text.startsWith('verb') ||
+				text.startsWith('adjectives') ||
+				text.startsWith('adverbs') ||
+				text.startsWith('vocabulary')
 			)
-		);
+				return true;
+		}
+
+		return false;
 	};
 
 	for (const element of contentList) {
@@ -161,12 +149,9 @@ const parseSections = (content: HTMLElement) => {
 		bodyElements: [],
 	};
 
-	/**
-	 * @returns if the section was complete
-	 */
 	const saveSection = (building: BuildingSection) => {
 		/* the only check for if the section is complete (it has body elements) */
-		if (building.bodyElements.length === 0) return false;
+		if (building.bodyElements.length === 0) return;
 
 		/* remove disregarded elements */
 		if (building.titleElement?.classList.contains(DISREGARD_CLASS_NAME))
@@ -177,17 +162,14 @@ const parseSections = (content: HTMLElement) => {
 
 		/* poison means do not add to sections list */
 		if (
-			building.bodyElements.length === 0 ||
-			building.titleElement?.classList.contains(POISON_CLASS_NAME) ||
-			building.bodyElements.some(element =>
-				element.classList.contains(POISON_CLASS_NAME),
+			building.bodyElements.length > 0 &&
+			!building.titleElement?.classList.contains(POISON_CLASS_NAME) &&
+			building.bodyElements.every(
+				element => !element.classList.contains(POISON_CLASS_NAME),
 			)
-		)
-			return true;
-
-		sections.push(building as Section);
-
-		return true;
+		) {
+			sections.push(building as Section);
+		}
 	};
 
 	const isTitle = (element: Element) => {
@@ -205,8 +187,9 @@ const parseSections = (content: HTMLElement) => {
 		for (const child of element.children) {
 			if (
 				child.nodeType === Node.ELEMENT_NODE &&
-				(child as HTMLElement).style.textDecoration === 'underline' &&
-				child.textContent!.trim() !== ''
+				child.textContent!.trim() !== '' &&
+				(child.nodeName === 'U' ||
+					(child as HTMLElement).style.textDecoration === 'underline')
 			) {
 				return true;
 			}
@@ -241,9 +224,7 @@ const parseSections = (content: HTMLElement) => {
 			return true;
 
 		/* blank breaks */
-		return directTexts(element, text => text.trim()).every(
-			text => text === '',
-		);
+		return element.textContent!.trim() === '';
 	};
 
 	const isIgnore = (element: Element) => {
@@ -251,7 +232,7 @@ const parseSections = (content: HTMLElement) => {
 	};
 
 	const newSection = (isTitle: boolean, include: Element | undefined) => {
-		/* break up the section */
+		/* attempt to break up the section */
 		saveSection(buildingSection);
 
 		const old = buildingSection;
@@ -260,10 +241,12 @@ const parseSections = (content: HTMLElement) => {
 		buildingSection = {
 			supersection: isTitle ? old.supersection + 1 : old.supersection,
 			subsection: isTitle ? 0 : old.subsection + 1,
-			titleElement: isTitle ? include : undefined,
+			titleElement: isTitle ? include : old.titleElement,
 			bodyElements: include === undefined || isTitle ? [] : [include],
 		};
 	};
+
+	let previousTitle = false;
 
 	for (let i = 0; i < contentList.length; ++i) {
 		const current = contentList[i];
@@ -273,7 +256,7 @@ const parseSections = (content: HTMLElement) => {
 		const title = isTitle(current);
 		const breaking = isBreak(current);
 
-		if (title || breaking) {
+		if ((title || breaking) && !previousTitle) {
 			newSection(
 				title,
 				title || current.classList.contains(BREAK_CLASS_NAME)
@@ -283,6 +266,8 @@ const parseSections = (content: HTMLElement) => {
 		} else {
 			buildingSection.bodyElements.push(current);
 		}
+
+		previousTitle = title;
 	}
 
 	/* save the last section */
