@@ -311,7 +311,7 @@ const csvBody = (lessonNumber: number, sections: Section[]) =>
 					.map(element => element.outerHTML)
 					.join('')
 					.replaceAll('\n', '')
-					.replaceAll(',', '&#44;')}, ${lessonNumber}, ${i}`,
+					.replaceAll(',', '&#44;')}, ${lessonNumber}, ${i + 1}`,
 		)
 		.join('\n');
 
